@@ -6,16 +6,24 @@ public static class AssetsJsonReader
 {
     private const string _defaultPath = "obj/project.assets.json";
 
-    public static Assets? DeserializeAssets(string? path = null)
-    {
-        string json = File.ReadAllText(path ?? _defaultPath);
-        return JsonSerializer.Deserialize<Assets>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-    }
-
     public static IEnumerable<ProjectLibrary>? DeserializeProjectLibraries(string? path = null)
     {
         var assets = DeserializeAssets(path);
         return assets?.Targets.Single().Value.ToProjectLibraries();
+    }
+
+    public static Assets? DeserializeAssets(string? path = null)
+    {
+        string json = File.ReadAllText(ResolvePath(path));
+        return JsonSerializer.Deserialize<Assets>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+    }
+
+    private static string ResolvePath(string? path)
+    {
+        if (path is null) return _defaultPath;
+        if (path.EndsWith("json")) return path;
+        if (Directory.GetFiles(path).Any(f => f.EndsWith("csproj"))) return Path.Join(path, _defaultPath);
+        throw new ArgumentException($"path doesn't lead to a project or project.assets.json file. path: {path}");
     }
 }
 

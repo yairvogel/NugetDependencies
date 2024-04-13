@@ -1,31 +1,43 @@
 ﻿
+using System.CommandLine;
 using System.Text.Json;
 using NugetDepednencies;
 
-var verb = CommandLineParser.Parse(args);
-return verb switch {
-    Verb.Assets => Assets(),
-    Verb.Packages => Packages(),
-    Verb.Check => Check(),
-    _ => throw new ArgumentOutOfRangeException()
-};
+var rootCommand = new RootCommand("NugetDependencies Command Line Tool");
 
-int Assets() {
-    var assets = AssetsJsonReader.DeserializeAssets();
+var projectPathOption = new Option<string?>(aliases: ["--projectPath", "-p"], description: "The project path to check");
+
+var assetsCommand = new Command("assets", "read the package-specific bits of the project.assets.json file of the current project");
+assetsCommand.AddOption(projectPathOption);
+assetsCommand.SetHandler(Assets, projectPathOption);
+rootCommand.AddCommand(assetsCommand);
+
+var packagesCommand = new Command("packages", "list all the project packages and versions in json format");
+packagesCommand.AddOption(projectPathOption);
+packagesCommand.SetHandler(Packages, projectPathOption);
+rootCommand.AddCommand(packagesCommand);
+
+var checkCommand = new Command("check", "validate that there are no package version conflicts");
+checkCommand.AddOption(projectPathOption);
+checkCommand.SetHandler(Check, projectPathOption);
+rootCommand.AddCommand(checkCommand);
+
+rootCommand.Invoke(args);
+
+void Assets(string? projectPath) {
+    var assets = AssetsJsonReader.DeserializeAssets(projectPath);
     JsonSerializer.Serialize(Console.OpenStandardOutput(), assets, new JsonSerializerOptions { WriteIndented = true });
     Console.WriteLine();
-    return 0;
 }
 
-int Packages() {
-    var packages = AssetsJsonReader.DeserializeProjectLibraries()?.Select(lib => lib.Package).ToList() ?? new();
+void Packages(string? projectPath) {
+    var packages = AssetsJsonReader.DeserializeProjectLibraries(projectPath)?.Select(lib => lib.Package).ToList() ?? new();
     JsonSerializer.Serialize(Console.OpenStandardOutput(), packages, new JsonSerializerOptions { WriteIndented = true });
     Console.WriteLine();
-    return 0;
 }
 
-int Check() {
-    var packageVersions = AssetsJsonReader.DeserializeProjectLibraries()?
+void Check(string? projectPath) {
+    var packageVersions = AssetsJsonReader.DeserializeProjectLibraries(projectPath)?
         .SelectMany(lib => lib.Dependencies.Append(lib.Package))
         .Distinct()
         .ToLookup(p => p.PackageName, p => p.Version);
@@ -44,37 +56,8 @@ int Check() {
     {
         Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine("Found package version conflicts.");
-        return 1;
     }
 
     Console.ForegroundColor = previousConsoleColor;
     Console.WriteLine("Project is ok.");
-    return 0;
-}
-
-enum Verb {
-    Assets,
-    Packages,
-    Check,
-}
-
-static class CommandLineParser
-{
-    public static Verb? Parse(string[] args)
-    {
-        if (args is []) {
-            var verbs = Enum.GetValues<Verb>().Select(s => s.ToString().ToLower());
-            Console.WriteLine($"supported commands: {string.Join(", ", verbs)}");
-            return null;
-        }
-
-        string verbStr = args[0];
-        if (!Enum.TryParse<Verb>(verbStr, ignoreCase: true, out var verb)) {
-            var verbs = string.Join(", ", Enum.GetValues<Verb>().Select(s => s.ToString().ToLower()));
-            Console.WriteLine($"supported commands: {verbs}. got {verbStr}");
-            return null;
-        }
-
-        return verb;
-    }
 }
