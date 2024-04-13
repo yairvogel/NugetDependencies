@@ -1,54 +1,80 @@
-﻿using System.Text.Json;
+﻿
+using System.Text.Json;
+using NugetDepednencies;
 
-string json = File.ReadAllText("obj/project.assets.json");
-var assets = JsonSerializer.Deserialize<Assets>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+var verb = CommandLineParser.Parse(args);
+return verb switch {
+    Verb.Assets => Assets(),
+    Verb.Packages => Packages(),
+    Verb.Check => Check(),
+    _ => throw new ArgumentOutOfRangeException()
+};
 
-var projectLibraries = assets!.Targets.Single().Value.ToProjectLibraries();
-
-foreach (var lib in projectLibraries) 
-{
-    Console.WriteLine(lib);
-    Console.WriteLine("[ " + string.Join(",", lib.Dependencies.Select(x => x)) + " ]");
+int Assets() {
+    var assets = AssetsJsonReader.DeserializeAssets();
+    JsonSerializer.Serialize(Console.OpenStandardOutput(), assets, new JsonSerializerOptions { WriteIndented = true });
+    Console.WriteLine();
+    return 0;
 }
 
-public class Assets
-{
-    public int Version { get; set; }
-
-    public Targets Targets { get; set; } = new();
+int Packages() {
+    var packages = AssetsJsonReader.DeserializeProjectLibraries()?.Select(lib => lib.Package).ToList() ?? new();
+    JsonSerializer.Serialize(Console.OpenStandardOutput(), packages, new JsonSerializerOptions { WriteIndented = true });
+    Console.WriteLine();
+    return 0;
 }
 
-public class Targets : Dictionary<string, Target>
-{
-}
-
-public class Target : Dictionary<string, AssetLibrary>
-{
-    public IEnumerable<ProjectLibrary> ToProjectLibraries()
-    {
-        return this.Select(ToProjectLibrary);
+int Check() {
+    var packageVersions = AssetsJsonReader.DeserializeProjectLibraries()?
+        .SelectMany(lib => lib.Dependencies.Append(lib.Package))
+        .Distinct()
+        .ToLookup(p => p.PackageName, p => p.Version);
+    
+    bool failed = false;
+    var previousConsoleColor = Console.ForegroundColor;
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    foreach (var package in packageVersions!) {
+        if (package.Count() > 1) {
+            failed = true;
+            Console.WriteLine($"Package version conflict. package {package.Key} has conflicting versions: {string.Join("; ", package)}");
+        }
     }
 
-    private ProjectLibrary ToProjectLibrary(KeyValuePair<string, AssetLibrary> entry)
+    if (failed)
     {
-        if (entry.Key.Split("/") is not [string packageName, string version]) {
-            throw new ArgumentException($"expected one forward slash (/) in the project identifier. got {entry.Key}");
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("Found package version conflicts.");
+        return 1;
+    }
+
+    Console.ForegroundColor = previousConsoleColor;
+    Console.WriteLine("Project is ok.");
+    return 0;
+}
+
+enum Verb {
+    Assets,
+    Packages,
+    Check,
+}
+
+static class CommandLineParser
+{
+    public static Verb? Parse(string[] args)
+    {
+        if (args is []) {
+            var verbs = Enum.GetValues<Verb>().Select(s => s.ToString().ToLower());
+            Console.WriteLine($"supported commands: {string.Join(", ", verbs)}");
+            return null;
         }
 
-        return new ProjectLibrary(
-                PackageName: packageName,
-                Version: version,
-                Dependencies: entry.Value.Dependencies.Select(kvp => new PackageReference(kvp.Key, kvp.Value)).ToArray());
+        string verbStr = args[0];
+        if (!Enum.TryParse<Verb>(verbStr, ignoreCase: true, out var verb)) {
+            var verbs = string.Join(", ", Enum.GetValues<Verb>().Select(s => s.ToString().ToLower()));
+            Console.WriteLine($"supported commands: {verbs}. got {verbStr}");
+            return null;
+        }
+
+        return verb;
     }
 }
-
-public class AssetLibrary
-{
-    public string Type { get; set; } = string.Empty;
-    
-    public Dictionary<string, string> Dependencies { get; set; } = new();
-}
-
-public record PackageReference(string PackageName, string Version);
-
-public record ProjectLibrary(string PackageName, string Version, PackageReference[] Dependencies);
